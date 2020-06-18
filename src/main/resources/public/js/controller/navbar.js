@@ -16,6 +16,7 @@ app.controller('navbarController', function($scope, $window, $location, $uibModa
     $scope.manageUsersLink = "Manage Users";
     $scope.logoutLink = "Logout";
     $scope.helpLink = "Help";
+    $scope.userKvpDataLink = "Manage Key/Value Data";
 
 
     //
@@ -110,6 +111,11 @@ app.controller('navbarController', function($scope, $window, $location, $uibModa
 
     };
 
+    $scope.doOpenKvpUserData = function() {
+
+        $location.path("/manage_user_kvp_data");
+    };
+
     $scope.doLogout = function() {
 
         if (!auth.isLoggedIn()) {
@@ -132,7 +138,7 @@ app.controller('navbarController', function($scope, $window, $location, $uibModa
     };
 
     $scope.doOpenHelp = function() {
-        $window.open('https://github.com/mgtechsoftware/smockin/wiki', '_blank');
+        $window.open('https://help.smockin.com', '_blank');
     };
 
 });

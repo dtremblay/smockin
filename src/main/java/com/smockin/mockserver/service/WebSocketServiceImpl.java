@@ -4,33 +4,21 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-
 import org.eclipse.jetty.websocket.api.Session;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
 import com.smockin.admin.exception.RecordNotFoundException;
 import com.smockin.admin.exception.ValidationException;
 import com.smockin.admin.persistence.dao.RestfulMockDAO;
 import com.smockin.admin.persistence.entity.RestfulMock;
 import com.smockin.admin.persistence.entity.RestfulMockDefinitionOrder;
-import com.smockin.admin.persistence.entity.RestfulMockDefinitionRule;
 import com.smockin.admin.persistence.enums.RestMethodEnum;
 import com.smockin.admin.persistence.enums.RestMockTypeEnum;
 import com.smockin.admin.service.utils.UserTokenServiceUtils;
@@ -71,7 +59,6 @@ public class WebSocketServiceImpl implements WebSocketService {
     @Autowired
     private RuleEngine ruleEngine;
     
-    Map<String, ExecutorService> executorServices = new HashMap<>();
 
     // TODO Should add TTL and scheduled sweeper to stop the sessionMap from building up.
     // A map of web socket client sessions per simulated web socket path
@@ -91,9 +78,9 @@ public class WebSocketServiceImpl implements WebSocketService {
         final String wsPath = session.getUpgradeRequest().getRequestURI().getPath();
         final RestfulMock wsMock = (isMultiUserMode)
                 ? restfulMockDAO.findActiveByMethodAndPathPatternAndTypesForMultiUser(
-                        RestMethodEnum.GET, wsPath, Arrays.asList(RestMockTypeEnum.PROXY_WS, RestMockTypeEnum.PUSH_WS, RestMockTypeEnum.RULE_WS))
+                        RestMethodEnum.GET, wsPath, Arrays.asList(RestMockTypeEnum.PROXY_WS, RestMockTypeEnum.RULE_WS))
                 : restfulMockDAO.findActiveByMethodAndPathPatternAndTypesForSingleUser(
-                        RestMethodEnum.GET, wsPath, Arrays.asList(RestMockTypeEnum.PROXY_WS, RestMockTypeEnum.PUSH_WS, RestMockTypeEnum.RULE_WS));
+                        RestMethodEnum.GET, wsPath, Arrays.asList(RestMockTypeEnum.PROXY_WS, RestMockTypeEnum.RULE_WS));
 
         if (wsMock == null) {
             if (session.isOpen()) {
@@ -134,31 +121,6 @@ public class WebSocketServiceImpl implements WebSocketService {
             }
 
         }
-        
-        if (wsMock.getMockType() == RestMockTypeEnum.PUSH_WS && executorServices.get(path) == null) {
-            ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
-            // The period will be the sum of all delays plus 1 second
-            long period = 1000;
-            for (RestfulMockDefinitionRule rule: wsMock.getRules()) {
-                if (rule.getResponseHeaders().get("type").equalsIgnoreCase("clock")) {
-                    long timeDelay = Long.parseLong(rule.getResponseHeaders().get("clock")); 
-                    period += timeDelay;
-                }
-            }
-            long offset = 0;
-            for (RestfulMockDefinitionRule rule: wsMock.getRules()) {
-                if (rule.getResponseHeaders().get("type").equalsIgnoreCase("clock")) {
-                    long timeDelay = Long.parseLong(rule.getResponseHeaders().get("clock")); 
-                    Runnable runnableTask = () -> {
-                        broadcast(new WebSocketDTO(path, rule.getResponseBody()));
-                    };
-                    scheduler.scheduleAtFixedRate(runnableTask, offset + timeDelay, period, TimeUnit.MILLISECONDS);
-                    offset += timeDelay;
-                }
-            }
-            
-            executorServices.put(path, scheduler);
-        }
 
         liveLoggingHandler.broadcast(LiveLoggingUtils.buildLiveLogOutboundDTO(traceId, 101, null,
                 "Websocket established (clientId: " + assignedId + ")", false, false));
@@ -173,16 +135,20 @@ public class WebSocketServiceImpl implements WebSocketService {
      */
     public void respondToMessage(final Session session, final String message) {
         logger.debug("respondToMessage called, with message {}", message);
+
         final String wsPath = session.getUpgradeRequest().getRequestURI().getPath();
 
         if (session.isOpen()) {
+
             // retrieve the session details
             final String sessionHandshake = session.getUpgradeResponse().getHeader(WS_HAND_SHAKE_KEY);
             Set<SessionIdWrapper> sessions = sessionMap.get(wsPath);
 
             final RestfulMock wsMock = restfulMockDAO.findActiveByMethodAndPathPatternAndTypesForSingleUser(
                     RestMethodEnum.GET, wsPath, Arrays.asList(RestMockTypeEnum.RULE_WS));
+
             if (wsMock != null && wsMock.getDefinitions().get(0) != null) {
+
                 // If none of the rules match, send the default response body
                 RestfulMockDefinitionOrder order = wsMock.getDefinitions().get(0);
 
@@ -214,9 +180,8 @@ public class WebSocketServiceImpl implements WebSocketService {
                         }
                     }
                 }
-            } else {
-                logger.warn("Invalid response for path {}", wsPath);
             }
+
         } else {
             logger.info("Session for path {} is not open", wsPath);
         }
@@ -234,7 +199,6 @@ public class WebSocketServiceImpl implements WebSocketService {
         final String sessionHandshake = session.getUpgradeResponse().getHeader(WS_HAND_SHAKE_KEY);
 
         sessionMap.entrySet().forEach(entry -> {
-            String path = entry.getKey();
             Set<SessionIdWrapper> sessionSet = entry.getValue();
             sessionSet.forEach( s -> {
                 if (s.getSession().getUpgradeResponse().getHeader(WS_HAND_SHAKE_KEY).equals(sessionHandshake)) {
@@ -245,15 +209,11 @@ public class WebSocketServiceImpl implements WebSocketService {
                     return;
                 }
             });
-            ExecutorService executorService = executorServices.get(path);
-            if (executorService != null) {
-                executorService.shutdown();
-                executorServices.remove(path);
-            }
         });
 
     }
 
+    /*
     public void broadcast(final WebSocketDTO dto) throws MockServerException {
         logger.debug("broadcast called");
 
@@ -275,6 +235,8 @@ public class WebSocketServiceImpl implements WebSocketService {
             }
         });
     }
+    */
+
     public void sendMessage(final String id, final WebSocketDTO dto) throws MockServerException {
         logger.debug("sendMessage called");
 

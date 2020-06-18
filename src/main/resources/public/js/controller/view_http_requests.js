@@ -16,10 +16,10 @@ app.controller('viewHttpRequestsController', function($scope, $location, $timeou
 
     //
     // Labels
-    $scope.viewRequestsHeading = "HTTP Live Feed";
+    $scope.viewRequestsHeading = 'HTTP Live Feed';
     $scope.noActivityData = 'Listening for activity...';
-    $scope.proxyLabel = '(via sMockin Proxy)';
     $scope.headersLabel = 'Headers';
+    $scope.parametersLabel = 'Parameters';
     $scope.bodyLabel = 'Body';
     $scope.requestSearchPlaceholderText = 'Enter a keyword to filter results below...';
     $scope.connectionStatusLabel = 'Connection Status';
@@ -28,10 +28,9 @@ app.controller('viewHttpRequestsController', function($scope, $location, $timeou
     $scope.noFeedRecordSelected = 'Nothing Selected';
     $scope.requestLabel = 'Request';
     $scope.responseLabel = 'Response';
-    $scope.mockedResponseLabel = 'Substituted (mock)';
-    $scope.originalResponseLabel = 'Original';
-    $scope.usingOverrideLabel = "using override!";
-    $scope.overrideResponseLabel = "Override Response";
+    $scope.httpResponseLabel = 'HTTP Response:';
+    $scope.proxiedDownstreamResponseTxt = 'Response is from downstream server';
+    $scope.proxiedMockResponseTxt = 'Response is a mock';
 
 
     //
@@ -78,7 +77,6 @@ app.controller('viewHttpRequestsController', function($scope, $location, $timeou
     $scope.sortReverse = false;
     $scope.search = '';
     $scope.selectedFeedData = null;
-    $scope.proxiedOverrides = [];
 
 
     //
@@ -116,36 +114,6 @@ app.controller('viewHttpRequestsController', function($scope, $location, $timeou
 
     $scope.getRowStyle = function(recordId) {
         return ($scope.selectedFeedData != null && $scope.selectedFeedData.id == recordId) ? 'info' : '';
-    };
-
-    $scope.isUsingOverride = function(feed) {
-
-        var requestKey = feed.request.method + feed.request.url;
-
-        for (var p=0; p < $scope.proxiedOverrides.length; p++) {
-            if ($scope.proxiedOverrides[p].requestKey == requestKey) {
-                return true;
-            }
-        }
-
-        return false;
-    };
-
-    $scope.doOpenOverride = function() {
-
-        var modalInstance = $uibModal.open({
-            templateUrl: 'override_proxied_call.html',
-            controller: 'overrideProxiedCallController',
-            backdrop  : 'static',
-            keyboard  : false
-        });
-
-        modalInstance.result.then(function (response) {
-
-        }, function () {
-
-        });
-
     };
 
 
@@ -265,8 +233,8 @@ app.controller('viewHttpRequestsController', function($scope, $location, $timeou
 
         var data = {
             'id' : req.id,
-            'proxied' : req.proxied,
             'request' : req.content,
+            'proxied' : req.proxied,
             'response' : null
         };
 

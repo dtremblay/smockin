@@ -1,31 +1,52 @@
 package com.smockin.mockserver.service;
 
+import com.smockin.admin.dto.UserKeyValueDataDTO;
+import com.smockin.admin.enums.UserModeEnum;
+import com.smockin.admin.persistence.entity.RestfulMock;
+import com.smockin.admin.persistence.entity.RestfulMockJavaScriptHandler;
+import com.smockin.admin.persistence.entity.SmockinUser;
+import com.smockin.admin.service.SmockinUserService;
+import com.smockin.admin.service.UserKeyValueDataService;
 import jdk.nashorn.api.scripting.ScriptObjectMirror;
 import org.hamcrest.Matchers;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
+import org.junit.runner.RunWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
 import org.mockito.Mockito;
+import org.mockito.Spy;
+import org.mockito.junit.MockitoJUnitRunner;
 import org.springframework.http.MediaType;
 import spark.Request;
-import javax.script.ScriptException;
-import java.util.*;
 
+import javax.script.ScriptException;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+
+@RunWith(MockitoJUnitRunner.class)
 public class JavaScriptResponseHandlerTest {
 
-    private JavaScriptResponseHandlerImpl javaScriptResponseHandler;
-    private Request req;
+    @Mock
+    private SmockinUserService smockinUserService;
+
+    @Mock
+    private UserKeyValueDataService userKeyValueDataService;
+
+    @Spy
+    @InjectMocks
+    private JavaScriptResponseHandlerImpl javaScriptResponseHandler = new JavaScriptResponseHandlerImpl();
 
     @Rule
     public ExpectedException expect = ExpectedException.none();
 
-    @Before
-    public void setUp() {
-        req = Mockito.mock(Request.class);
-        javaScriptResponseHandler = new JavaScriptResponseHandlerImpl();
-    }
+    @Mock
+    private Request req;
+
 
     @Test
     public void executeJS_print_Test() throws ScriptException {
@@ -250,12 +271,37 @@ public class JavaScriptResponseHandlerTest {
         Mockito.when(req.queryParams("name")).thenReturn("joe");
         Mockito.when(req.queryParams("age")).thenReturn("35");
 
+        Mockito.when(smockinUserService.getUserMode()).thenReturn(UserModeEnum.INACTIVE);
+
         // Test
-        final String result = javaScriptResponseHandler.populateRequestObjectWithInbound(req, "/hello/{name}");
+        final String result = javaScriptResponseHandler.populateRequestObjectWithInbound(req, "/hello/{name}", "");
 
         // Assertions
         Assert.assertNotNull(result);
         Assert.assertEquals("request.path='/hello/james'; request.body='xxx'; request.pathVars['name']='james'; request.parameters['name']='joe'; request.parameters['age']='35'; request.headers['one']='1'; request.headers['two']='2';", result.trim());
+    }
+
+    @Test
+    public void populateRequestObjectWithInbound_multiUserCtx_Test() {
+
+        // Setup
+        Mockito.when(req.headers()).thenReturn(new HashSet<>(Arrays.asList("one", "two")));
+        Mockito.when(req.headers("one")).thenReturn("1");
+        Mockito.when(req.headers("two")).thenReturn("2");
+        Mockito.when(req.pathInfo()).thenReturn("/bob/hello/james");
+        Mockito.when(req.body()).thenReturn("xxx");
+        Mockito.when(req.queryParams()).thenReturn(new HashSet<>(Arrays.asList("name", "age")));
+        Mockito.when(req.queryParams("name")).thenReturn("joe");
+        Mockito.when(req.queryParams("age")).thenReturn("35");
+
+        Mockito.when(smockinUserService.getUserMode()).thenReturn(UserModeEnum.ACTIVE);
+
+        // Test
+        final String result = javaScriptResponseHandler.populateRequestObjectWithInbound(req, "/hello/{name}", "/bob");
+
+        // Assertions
+        Assert.assertNotNull(result);
+        Assert.assertEquals("request.path='/bob/hello/james'; request.body='xxx'; request.pathVars['name']='james'; request.parameters['name']='joe'; request.parameters['age']='35'; request.headers['one']='1'; request.headers['two']='2';", result.trim());
     }
 
     @Test
@@ -274,6 +320,291 @@ public class JavaScriptResponseHandlerTest {
         expect.expectMessage(Matchers.is("ReferenceError: \"java\" is not defined in <eval> at line number 1"));
 
         javaScriptResponseHandler.executeJS("java.lang.Runtime.getRuntime().exec(\"java.lang.System.nanoTime();\");");
+    }
+
+    @Test
+    public void populateKVPs_noKvpsPresent_Test() throws ScriptException {
+
+        // Setup
+        final String userFunc = "function handleResponse(request, response) { "
+                + ""
+                + "response.body = \"Hello Bob. How are you on this sunny day?\";"
+                + "}";
+
+        final RestfulMock mock = new RestfulMock();
+        final SmockinUser smockinUser = new SmockinUser();
+        smockinUser.setCtxPath("");
+        smockinUser.setId(1);
+        mock.setCreatedBy(smockinUser);
+        final RestfulMockJavaScriptHandler javaScriptHandler = new RestfulMockJavaScriptHandler();
+        javaScriptHandler.setRestfulMock(mock);
+        javaScriptHandler.setSyntax(userFunc);
+        mock.setJavaScriptHandler(javaScriptHandler);
+
+        // Test
+        final String result = javaScriptResponseHandler.populateKVPs(req, mock);
+
+        // Assertions
+        Assert.assertNotNull(result);
+        Assert.assertEquals(javaScriptResponseHandler.defaultKeyValuePairStoreObject, result);
+    }
+
+    @Test
+    public void populateKVPs_fixedVars_Test() throws ScriptException {
+
+        // Setup
+        final String userFunc = "function handleResponse(request, response) { "
+                + ""
+                + "response.body = \"Hello\" + lookUpKvp('foo') + \". How are you on this\" + lookUpKvp('weather') + \"day?\";"
+                + "}";
+
+        final RestfulMock mock = new RestfulMock();
+        final SmockinUser smockinUser = new SmockinUser();
+        smockinUser.setCtxPath("");
+        smockinUser.setId(1);
+        mock.setCreatedBy(smockinUser);
+        final RestfulMockJavaScriptHandler javaScriptHandler = new RestfulMockJavaScriptHandler();
+        javaScriptHandler.setRestfulMock(mock);
+        javaScriptHandler.setSyntax(userFunc);
+        mock.setJavaScriptHandler(javaScriptHandler);
+
+        // Mock
+        final UserKeyValueDataDTO userKeyValueDataDTO = new UserKeyValueDataDTO();
+        userKeyValueDataDTO.setValue("XXX");
+        Mockito.when(userKeyValueDataService.loadByKey(Mockito.anyString(), Mockito.anyLong())).thenReturn(userKeyValueDataDTO);
+
+        // Test
+        final String result = javaScriptResponseHandler.populateKVPs(req, mock);
+
+        // Assertions
+        Assert.assertNotNull(result);
+        Assert.assertTrue(result.equals(javaScriptResponseHandler.defaultKeyValuePairStoreObjectStart + "{\"foo\":\"XXX\",\"weather\":\"XXX\"};")
+                || result.equals(javaScriptResponseHandler.defaultKeyValuePairStoreObjectStart + "{\"weather\":\"XXX\",\"foo\":\"XXX\"};"));
+    }
+
+    @Test
+    public void populateKVPs_requestBodyInput_Test() throws ScriptException {
+
+        // Setup
+        final String userFunc = "function handleResponse(request, response) { "
+                + "var name = lookUpKvp(request.body);"
+                + "var weather = lookUpKvp('weather');"
+                + "response.body = \"Hello\" + name + \". How are you on this\" + weather + \"day?\";"
+                + "}";
+
+        final RestfulMock mock = new RestfulMock();
+        final SmockinUser smockinUser = new SmockinUser();
+        smockinUser.setCtxPath("");
+        smockinUser.setId(1);
+        mock.setCreatedBy(smockinUser);
+        final RestfulMockJavaScriptHandler javaScriptHandler = new RestfulMockJavaScriptHandler();
+        javaScriptHandler.setRestfulMock(mock);
+        javaScriptHandler.setSyntax(userFunc);
+        mock.setJavaScriptHandler(javaScriptHandler);
+
+        // Mock
+        final UserKeyValueDataDTO userKeyValueDataDTO = new UserKeyValueDataDTO();
+        userKeyValueDataDTO.setValue("XXX");
+        Mockito.when(userKeyValueDataService.loadByKey(Mockito.anyString(), Mockito.anyLong())).thenReturn(userKeyValueDataDTO);
+        Mockito.when(req.body()).thenReturn("hello");
+
+        // Test
+        final String result = javaScriptResponseHandler.populateKVPs(req, mock);
+
+        // Assertions
+        Assert.assertNotNull(result);
+        Assert.assertTrue(result.equals(javaScriptResponseHandler.defaultKeyValuePairStoreObjectStart + "{\"hello\":\"XXX\",\"weather\":\"XXX\"};")
+                || result.equals(javaScriptResponseHandler.defaultKeyValuePairStoreObjectStart + "{\"weather\":\"XXX\",\"hello\":\"XXX\"};") );
+    }
+
+    @Test
+    public void populateKVPs_requestPathVarsInput_Test() throws ScriptException {
+
+        // Setup
+        final String userFunc = "function handleResponse(request, response) { "
+                + "var kvpArray = { name : lookUpKvp(request.pathVars.firstName), weather : lookUpKvp('weather') };"
+                + "response.body = \"Hello\" + kvpArray.name + \". How are you on this\" + kvpArray.weather + \"day?\";"
+                + "}";
+
+        final RestfulMock mock = new RestfulMock();
+        final SmockinUser smockinUser = new SmockinUser();
+        smockinUser.setCtxPath("");
+        smockinUser.setId(1);
+        mock.setCreatedBy(smockinUser);
+        final RestfulMockJavaScriptHandler javaScriptHandler = new RestfulMockJavaScriptHandler();
+        javaScriptHandler.setRestfulMock(mock);
+        javaScriptHandler.setSyntax(userFunc);
+        mock.setJavaScriptHandler(javaScriptHandler);
+        mock.setPath("/hello/{firstName}");
+
+        // Mock
+        final UserKeyValueDataDTO userKeyValueDataDTO = new UserKeyValueDataDTO();
+        userKeyValueDataDTO.setValue("XXX");
+        Mockito.when(userKeyValueDataService.loadByKey(Mockito.anyString(), Mockito.anyLong())).thenReturn(userKeyValueDataDTO);
+        Mockito.when(req.pathInfo()).thenReturn("/hello/bob");
+
+        // Test
+        final String result = javaScriptResponseHandler.populateKVPs(req, mock);
+
+        // Assertions
+        Assert.assertNotNull(result);
+        Assert.assertEquals(javaScriptResponseHandler.defaultKeyValuePairStoreObjectStart + "{\"bob\":\"XXX\",\"weather\":\"XXX\"};", result);
+    }
+
+    @Test
+    public void populateKVPs_requestParametersInput_Test() throws ScriptException {
+
+        // Setup
+        final String userFunc = "function handleResponse(request, response) { "
+                + "var getName = lookUpKvp(request.parameters['my-first-name']);"
+                + "var getWeather = ( lookUpKvp('weather') );"
+                + "var weather = KVP.weather;"
+                + "response.body = \"Hello\" + getName + \". How are you on this\" + getWeather + \"day?\";"
+                + "}";
+
+        final RestfulMock mock = new RestfulMock();
+        final SmockinUser smockinUser = new SmockinUser();
+        smockinUser.setCtxPath("");
+        smockinUser.setId(1);
+        mock.setCreatedBy(smockinUser);
+        final RestfulMockJavaScriptHandler javaScriptHandler = new RestfulMockJavaScriptHandler();
+        javaScriptHandler.setRestfulMock(mock);
+        javaScriptHandler.setSyntax(userFunc);
+        mock.setJavaScriptHandler(javaScriptHandler);
+
+        // Mock
+        final UserKeyValueDataDTO userKeyValueDataDTO = new UserKeyValueDataDTO();
+        userKeyValueDataDTO.setValue("XXX");
+        Mockito.when(userKeyValueDataService.loadByKey(Mockito.anyString(), Mockito.anyLong())).thenReturn(userKeyValueDataDTO);
+        Mockito.when(req.queryParams()).thenReturn(new HashSet<String>() { { add("my-first-name"); } });
+        Mockito.when(req.queryParams(Mockito.anyString())).thenReturn("Harry");
+
+        // Test
+        final String result = javaScriptResponseHandler.populateKVPs(req, mock);
+
+        // Assertions
+        Assert.assertNotNull(result);
+        Assert.assertEquals(javaScriptResponseHandler.defaultKeyValuePairStoreObjectStart + "{\"Harry\":\"XXX\",\"weather\":\"XXX\"};", result);
+    }
+
+    @Test
+    public void populateKVPs_requestHeadersInput_Test() throws ScriptException {
+
+        // Setup
+        final String userFunc = "function handleResponse(request, response) { "
+                + "var getName = lookUpKvp(request.headers.myLastName);"
+                + "var getWeather = ( lookUpKvp('weather') );"
+                + "var weather = KVP.weather;"
+                + "response.body = \"Hello\" + getName + \". How are you on this\" + getWeather + \"day?\";"
+                + "}";
+
+        final RestfulMock mock = new RestfulMock();
+        final SmockinUser smockinUser = new SmockinUser();
+        smockinUser.setCtxPath("");
+        smockinUser.setId(1);
+        mock.setCreatedBy(smockinUser);
+        final RestfulMockJavaScriptHandler javaScriptHandler = new RestfulMockJavaScriptHandler();
+        javaScriptHandler.setRestfulMock(mock);
+        javaScriptHandler.setSyntax(userFunc);
+        mock.setJavaScriptHandler(javaScriptHandler);
+
+        // Mock
+        final UserKeyValueDataDTO userKeyValueDataDTO = new UserKeyValueDataDTO();
+        userKeyValueDataDTO.setValue("XXX");
+        Mockito.when(userKeyValueDataService.loadByKey(Mockito.anyString(), Mockito.anyLong())).thenReturn(userKeyValueDataDTO);
+        Mockito.when(req.headers()).thenReturn(new HashSet<String>() { { add("myLastName"); } });
+        Mockito.when(req.headers(Mockito.anyString())).thenReturn("Potter");
+
+        // Test
+        final String result = javaScriptResponseHandler.populateKVPs(req, mock);
+
+        // Assertions
+        Assert.assertNotNull(result);
+        Assert.assertTrue((javaScriptResponseHandler.defaultKeyValuePairStoreObjectStart + "{\"Potter\":\"XXX\",\"weather\":\"XXX\"};").equals(result)
+                            || (javaScriptResponseHandler.defaultKeyValuePairStoreObjectStart + "{\"weather\":\"XXX\",\"Potter\":\"XXX\"};").equals(result));
+    }
+
+    @Test
+    public void populateKVPs_kvpNotFound_Test() throws ScriptException {
+
+        // Setup
+        final String userFunc = "function handleResponse(request, response) { "
+                + ""
+                + "response.body = \"Hello\" + lookUpKvp('foo') + \". How are you on this\" + lookUpKvp('weather') + \"day?\";"
+                + "}";
+
+        final RestfulMock mock = new RestfulMock();
+        final SmockinUser smockinUser = new SmockinUser();
+        smockinUser.setCtxPath("");
+        smockinUser.setId(1);
+        mock.setCreatedBy(smockinUser);
+        final RestfulMockJavaScriptHandler javaScriptHandler = new RestfulMockJavaScriptHandler();
+        javaScriptHandler.setRestfulMock(mock);
+        javaScriptHandler.setSyntax(userFunc);
+        mock.setJavaScriptHandler(javaScriptHandler);
+
+        // Test
+        final String result = javaScriptResponseHandler.populateKVPs(req, mock);
+
+        // Assertions
+        Assert.assertNotNull(result);
+        Assert.assertEquals(javaScriptResponseHandler.defaultKeyValuePairStoreObjectStart + "{\"foo\":\"\",\"weather\":\"\"};", result);
+
+    }
+
+    @Test
+    public void populateKVPs_invalidKvpSyntax1_Test() throws ScriptException {
+
+        // Assertions
+        expect.expect(ScriptException.class);
+        expect.expectMessage(Matchers.is("Invalid lookUpKvp(...) syntax. Unable to determine key lookup type"));
+
+        // Setup
+        final String userFunc = "function handleResponse(request, response) { "
+                + ""
+                + "response.body = \"Hello\" + lookUpKvp( + \". How are you on this\" + lookUpKvp() + \"day?\";"
+                + "}";
+
+        final RestfulMock mock = new RestfulMock();
+        final SmockinUser smockinUser = new SmockinUser();
+        smockinUser.setCtxPath("");
+        smockinUser.setId(1);
+        mock.setCreatedBy(smockinUser);
+        final RestfulMockJavaScriptHandler javaScriptHandler = new RestfulMockJavaScriptHandler();
+        javaScriptHandler.setRestfulMock(mock);
+        javaScriptHandler.setSyntax(userFunc);
+        mock.setJavaScriptHandler(javaScriptHandler);
+
+        // Test
+        javaScriptResponseHandler.populateKVPs(req, mock);
+    }
+
+    @Test
+    public void populateKVPs_invalidKvpSyntax2_Test() throws ScriptException {
+
+        // Assertions
+        expect.expect(ScriptException.class);
+        expect.expectMessage(Matchers.is("Invalid lookUpKvp(...) syntax. key within find parenthesis is undefined"));
+
+        // Setup
+        final String userFunc = "function handleResponse(request, response) { "
+                + ""
+                + "response.body = \"Hello\" + lookUpKvp() + \". How are you on this\" + lookUpKvp('foo') + \"day?\";"
+                + "}";
+
+        final RestfulMock mock = new RestfulMock();
+        final SmockinUser smockinUser = new SmockinUser();
+        smockinUser.setCtxPath("");
+        smockinUser.setId(1);
+        mock.setCreatedBy(smockinUser);
+        final RestfulMockJavaScriptHandler javaScriptHandler = new RestfulMockJavaScriptHandler();
+        javaScriptHandler.setRestfulMock(mock);
+        javaScriptHandler.setSyntax(userFunc);
+        mock.setJavaScriptHandler(javaScriptHandler);
+
+        // Test
+        javaScriptResponseHandler.populateKVPs(req, mock);
+
     }
 
 }

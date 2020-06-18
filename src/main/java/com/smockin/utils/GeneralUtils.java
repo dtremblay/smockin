@@ -4,20 +4,25 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smockin.admin.enums.UserModeEnum;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.math.NumberUtils;
+import org.apache.http.client.utils.URLEncodedUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.MediaType;
 import spark.Request;
+
 import java.io.*;
+import java.nio.charset.Charset;
 import java.text.SimpleDateFormat;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
@@ -40,12 +45,8 @@ public final class GeneralUtils {
     public static final String ENABLE_CORS_PARAM = "ENABLE_CORS";
 
     public static final String LOG_REQ_ID = "X-Smockin-Trace-ID";
-    public static final String PROXY_MOCK_INTERCEPT_HEADER = "X-Proxy-Mock-Intercept";
+    public static final String PROXIED_RESPONSE_HEADER = "X-Proxied-Response";
 
-    // Looks for values within the brace format ${}. So ${bob} would return the value 'bob'.
-    static final String INBOUND_TOKEN_PATTERN = "\\$\\{(.*?)\\}";
-
-    // Thread safe class, provided all config is defined before it's use.
     static final ObjectMapper JSON_MAPPER = new ObjectMapper();
 
     static {
@@ -78,23 +79,6 @@ public final class GeneralUtils {
     public final static String createFileNameUniqueTimeStamp() {
         return new SimpleDateFormat(UNIQUE_TIMESTAMP_FORMAT)
                 .format(getCurrentDate());
-    }
-
-    // NOTE It is important that this preserves any whitespaces around the token
-    public static String findFirstInboundParamMatch(final String input) {
-
-        if (input == null) {
-            return null;
-        }
-
-        final Pattern pattern = Pattern.compile(INBOUND_TOKEN_PATTERN);
-        final Matcher matcher = pattern.matcher(input);
-
-        while (matcher.find()) {
-            return matcher.group(1);
-        }
-
-        return null;
     }
 
     /**
@@ -139,13 +123,13 @@ public final class GeneralUtils {
         return null;
     }
 
-    public static String findPathVarIgnoreCase(final Request request, final String mockPath, final String pathVarName) {
+    public static String findPathVarIgnoreCase(final String inboundPath, final String mockPath, final String pathVarName) {
 
         if (pathVarName == null) {
             return null;
         }
 
-        return findAllPathVars(request.pathInfo(), mockPath).get(pathVarName.toLowerCase());
+        return findAllPathVars(inboundPath, mockPath).get(pathVarName.toLowerCase());
     }
 
     public static Map<String, String> findAllPathVars(final String inboundPath, final String mockPath) {
@@ -181,6 +165,13 @@ public final class GeneralUtils {
         }
 
         return pathVars;
+    }
+
+    public static String sanitizeMultiUserPath(final UserModeEnum usermode, final String pathInfo, final String ctxPath) {
+
+        return ( UserModeEnum.ACTIVE.equals(usermode) && StringUtils.isNotBlank(ctxPath) )
+                    ? StringUtils.removeFirst(pathInfo, ctxPath)
+                    : pathInfo;
     }
 
     public static void checkForAndHandleSleep(final long sleepInMillis) {
@@ -227,18 +218,32 @@ public final class GeneralUtils {
         return StringUtils.replaceAll(original, System.getProperty("line.separator"), "");
     }
 
+    public static List<Map<String, ?>> deserialiseJSONToList(final String jsonStr) {
+        return deserialiseJson(jsonStr);
+    }
+
     public static Map<String, ?> deserialiseJSONToMap(final String jsonStr) {
         return deserialiseJson(jsonStr);
     }
 
     public static <T> T deserialiseJson(final String jsonStr) {
+        return deserialiseJson(jsonStr, true);
+    }
+
+    public static Map<String, ?> deserialiseJSONToMap(final String jsonStr, final boolean logFailure) {
+        return deserialiseJson(jsonStr, logFailure);
+    }
+
+    public static <T> T deserialiseJson(final String jsonStr, final boolean logFailure) {
 
         if (jsonStr != null) {
             try {
                 return JSON_MAPPER.readValue(jsonStr, new TypeReference<T>() {});
             } catch (IOException e) {
-                logger.error("Error de-serialising json", e);
-                // fail silently
+                if (logFailure) {
+                    logger.error("Error de-serialising json", e);
+                }
+                // always fail silently
             }
         }
 
@@ -404,6 +409,68 @@ public final class GeneralUtils {
                 logger.error("Error closing output stream", e);
             }
         }
+    }
+
+    public static String extractRequestParamByName(final Request req, final String fieldName) {
+
+        return extractAllRequestParams(req).get(fieldName);
+    }
+
+    public static Map<String, String> extractAllRequestParams(final Request req) {
+
+        final Map<String, String> allParams = req.queryMap()
+                .toMap()
+                .entrySet()
+                .stream()
+                .collect(HashMap::new,
+                        (m,v) ->
+                            m.put(v.getKey(), (v.getValue() != null && v.getValue().length != 0) ? v.getValue()[0] : null),
+                        HashMap::putAll);
+
+        if (req.contentType() != null
+            && (req.contentType().contains(MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+            ||  req.contentType().contains(MediaType.MULTIPART_FORM_DATA_VALUE))) {
+
+            if (req.body() != null) {
+                allParams.putAll(URLEncodedUtils.parse(req.body(), Charset.defaultCharset())
+                                    .stream()
+                                    .collect(HashMap::new, (m,v) -> m.put(v.getName(), v.getValue()), HashMap::putAll));
+            }
+        }
+
+        return allParams;
+    }
+
+    public static String removeJsComments(final String jsSrc) {
+
+        final String carriage = "\n";
+        final String comment = "//";
+
+        if (jsSrc == null
+                || StringUtils.indexOf(jsSrc, comment) == -1) {
+            return jsSrc;
+        }
+
+        // i.e single line
+        if (StringUtils.indexOf(jsSrc, carriage) == -1) {
+            return StringUtils.substring(jsSrc, 0, StringUtils.indexOf(jsSrc, comment)).trim();
+        }
+
+        final String[] lines = StringUtils.split(jsSrc, carriage);
+
+        return Stream.of(lines)
+                .filter(l ->
+                    !l.trim().startsWith(comment))
+                .map(l -> {
+
+                    final int commentInLine = StringUtils.indexOf(l, comment);
+
+                    return (commentInLine > -1)
+                            ? StringUtils.substring(l, 0, commentInLine)
+                            : l;
+                })
+                .collect(Collectors.joining(carriage))
+                .trim();
     }
 
 }

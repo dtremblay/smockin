@@ -5,8 +5,11 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.mockito.Mockito;
+import spark.QueryParamsMap;
 import spark.Request;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -30,44 +33,6 @@ public class GeneralUtilsTest {
     @Test
     public void getCurrentDate_Populated_Test() {
         Assert.assertNotNull(GeneralUtils.getCurrentDate());
-    }
-
-    @Test
-    public void findFirstInboundParamMatch_singleTokenWithSpace_Test() {
-        final String result = GeneralUtils.findFirstInboundParamMatch("hello ${REQ_HEAD= joe }. how are you?");
-        Assert.assertEquals("REQ_HEAD= joe ", result);
-    }
-
-    @Test
-    public void findFirstInboundParamMatch_singleTokenWithSpaces_Test() {
-        final String result = GeneralUtils.findFirstInboundParamMatch("hello ${  REQ_HEAD=   joe   }. how are you?");
-        Assert.assertEquals("  REQ_HEAD=   joe   ", result);
-    }
-
-    @Test
-    public void findFirstInboundParamMatch_multiToken_Test() {
-        final String result = GeneralUtils.findFirstInboundParamMatch("hello ${REQ_HEAD= max}. how are you ${REQ_HEAD bob }?");
-        Assert.assertEquals("REQ_HEAD= max", result);
-    }
-
-    @Test
-    public void findFirstInboundParamMatch_NoToken_Test() {
-        Assert.assertNull(GeneralUtils.findFirstInboundParamMatch("hello world"));
-    }
-
-    @Test
-    public void findFirstInboundParamMatch_Null_Test() {
-        Assert.assertNull(GeneralUtils.findFirstInboundParamMatch(null));
-    }
-
-    @Test
-    public void findFirstInboundParamMatch_Blank_Test() {
-        Assert.assertNull(GeneralUtils.findFirstInboundParamMatch(""));
-    }
-
-    @Test
-    public void findFirstInboundParamMatch_Empty_Test() {
-        Assert.assertNull(GeneralUtils.findFirstInboundParamMatch("  "));
     }
 
     @Test
@@ -136,7 +101,7 @@ public class GeneralUtilsTest {
         Mockito.when(req.pathInfo()).thenReturn("/person/Bob");
 
         // Test
-        final String nameResult = GeneralUtils.findPathVarIgnoreCase(req, "/person/{name}", "NAME");
+        final String nameResult = GeneralUtils.findPathVarIgnoreCase(req.pathInfo(), "/person/{name}", "NAME");
 
         // Assertions
         Assert.assertNotNull(nameResult);
@@ -151,7 +116,7 @@ public class GeneralUtilsTest {
         Mockito.when(req.pathInfo()).thenReturn("/person/21");
 
         // Test
-        final String ageResult = GeneralUtils.findPathVarIgnoreCase(req, "/person/{age}", "agE");
+        final String ageResult = GeneralUtils.findPathVarIgnoreCase(req.pathInfo(), "/person/{age}", "agE");
 
         // Assertions
         Assert.assertNotNull(ageResult);
@@ -358,6 +323,259 @@ public class GeneralUtilsTest {
 
         Assert.assertNotNull(pathVars);
         Assert.assertTrue(pathVars.isEmpty());
+    }
+
+    @Test
+    public void extractRequestParamByNameTest() {
+
+        // Setup
+        final Request req = Mockito.mock(Request.class);
+        final QueryParamsMap queryParamsMap = Mockito.mock(QueryParamsMap.class);
+        final Map<String, String[]> params = new HashMap<>();
+        params.put("name", new String[] { "bob" });
+        Mockito.when(queryParamsMap.toMap()).thenReturn(params);
+        Mockito.when(req.queryMap()).thenReturn(queryParamsMap);
+
+        // Test
+        final String result = GeneralUtils.extractRequestParamByName(req, "name");
+
+        // Assertions
+        Assert.assertNotNull(result);
+        Assert.assertEquals("bob", result);
+
+    }
+
+    @Test
+    public void extractRequestParamByName_nullValue_Test() {
+
+        // Setup
+        final Request req = Mockito.mock(Request.class);
+        final QueryParamsMap queryParamsMap = Mockito.mock(QueryParamsMap.class);
+        final Map<String, String[]> params = new HashMap<>();
+        params.put("name", null);
+        Mockito.when(queryParamsMap.toMap()).thenReturn(params);
+        Mockito.when(req.queryMap()).thenReturn(queryParamsMap);
+
+        // Test
+        final String result = GeneralUtils.extractRequestParamByName(req, "name");
+
+        // Assertions
+        Assert.assertNull(result);
+
+    }
+
+    @Test
+    public void extractRequestParamByName_emptyMap_Test() {
+
+        // Setup
+        final Request req = Mockito.mock(Request.class);
+        final QueryParamsMap queryParamsMap = Mockito.mock(QueryParamsMap.class);
+        Mockito.when(queryParamsMap.toMap()).thenReturn(new HashMap<>());
+        Mockito.when(req.queryMap()).thenReturn(queryParamsMap);
+
+        // Test
+        final String result = GeneralUtils.extractRequestParamByName(req, "name");
+
+        // Assertions
+        Assert.assertNull(result);
+
+    }
+
+    @Test
+    public void extractAllRequestParamsTest() {
+
+        // Setup
+        final Request req = Mockito.mock(Request.class);
+        final QueryParamsMap queryParamsMap = Mockito.mock(QueryParamsMap.class);
+        final Map<String, String[]> params = new HashMap<>();
+        params.put("name", new String[] { "bob" });
+        params.put("age", new String[] { "27" });
+        Mockito.when(queryParamsMap.toMap()).thenReturn(params);
+        Mockito.when(req.queryMap()).thenReturn(queryParamsMap);
+
+        // Test
+        final Map<String, String> results = GeneralUtils.extractAllRequestParams(req);
+
+        // Assertions
+        Assert.assertNotNull(results);
+        Assert.assertEquals(2, results.size());
+        Assert.assertEquals("bob", results.get("name"));
+        Assert.assertEquals("27", results.get("age"));
+
+    }
+
+    @Test
+    public void extractAllRequestParams_nullValues_Test() {
+
+        // Setup
+        final Request req = Mockito.mock(Request.class);
+        final QueryParamsMap queryParamsMap = Mockito.mock(QueryParamsMap.class);
+        final Map<String, String[]> params = new HashMap<>();
+        params.put("name", null);
+        params.put("age", null);
+        Mockito.when(queryParamsMap.toMap()).thenReturn(params);
+        Mockito.when(req.queryMap()).thenReturn(queryParamsMap);
+
+        // Test
+        final Map<String, String> results = GeneralUtils.extractAllRequestParams(req);
+
+        // Assertions
+        Assert.assertNotNull(results);
+        Assert.assertEquals(2, results.size());
+        Assert.assertNull(results.get("name"));
+        Assert.assertNull(results.get("age"));
+
+    }
+
+    @Test
+    public void extractAllRequestParams_emptyMap_Test() {
+
+        // Setup
+        final Request req = Mockito.mock(Request.class);
+        final QueryParamsMap queryParamsMap = Mockito.mock(QueryParamsMap.class);
+        Mockito.when(queryParamsMap.toMap()).thenReturn(new HashMap<>());
+        Mockito.when(req.queryMap()).thenReturn(queryParamsMap);
+
+        // Test
+        final Map<String, String> results = GeneralUtils.extractAllRequestParams(req);
+
+        // Assertions
+        Assert.assertNotNull(results);
+        Assert.assertEquals(0, results.size());
+
+    }
+
+    @Test
+    public void deserialiseJSONToListTest() {
+
+        // Test
+        final List<Map<String, ?>> result = GeneralUtils.deserialiseJSONToList("[{\"fruit\":{\"name\":\"pear\"}},{\"fruit\":{\"name\":\"apple\"}}]");
+
+        // Assertions
+        Assert.assertNotNull(result);
+        Assert.assertEquals(2, result.size());
+        Assert.assertNotNull(result.get(0));
+        Assert.assertNotNull(result.get(1));
+        Assert.assertNotNull(result.get(0).get("fruit"));
+        Assert.assertNotNull(result.get(1).get("fruit"));
+        Assert.assertTrue(result.get(0).get("fruit") instanceof Map);
+        Assert.assertTrue(result.get(1).get("fruit") instanceof Map);
+        Assert.assertTrue(((Map)result.get(0).get("fruit")).get("name") != null);
+        Assert.assertTrue(((Map)result.get(1).get("fruit")).get("name") != null);
+        Assert.assertEquals("pear", ((Map)result.get(0).get("fruit")).get("name"));
+        Assert.assertEquals("apple", ((Map)result.get(1).get("fruit")).get("name"));
+
+    }
+
+    @Test
+    public void deserialiseJSONToListEmptyTest() {
+
+        // Test
+        final List<Map<String, ?>> result = GeneralUtils.deserialiseJSONToList("[]");
+
+        // Assertions
+        Assert.assertNotNull(result);
+        Assert.assertTrue(result.isEmpty());
+
+    }
+
+    @Test
+    public void deserialiseJSONToListNullTest() {
+
+        // Test
+        final List<Map<String, ?>> result = GeneralUtils.deserialiseJSONToList(null);
+
+        // Assertions
+        Assert.assertNull(result);
+
+    }
+
+    @Test
+    public void deserialiseJSONToListBlankTest() {
+
+        // Test
+        final List<Map<String, ?>> result = GeneralUtils.deserialiseJSONToList(" ");
+
+        // Assertions
+        Assert.assertNull(result);
+
+    }
+
+    @Test
+    public void removeJsCommentsTest() {
+
+        // Setup
+        final String jsSrc = "function doSomething(a,b) {\n"
+                + "  var c = a;\n"
+                + "  // hide this line\n"
+                + "  var d = b; // hide this half of the line\n"
+                + "  var e = c+d;\n"
+                + "} // end of function";
+
+        // Test
+        final String result = GeneralUtils.removeJsComments(jsSrc);
+
+        // Assertions
+        Assert.assertNotNull(result);
+        Assert.assertEquals("function doSomething(a,b) {\n" +
+                "  var c = a;\n" +
+                "  var d = b; \n" +
+                "  var e = c+d;\n" +
+                "}", result);
+    }
+
+    @Test
+    public void removeJsComments_noCommentsPresent_Test() {
+
+        // Setup
+        final String jsSrc = "function doSomething(a,b) {\n"
+                + "  var c = a;\n"
+                + "  var d = b;\n"
+                + "  var e = c+d;\n"
+                + "}";
+
+        // Test
+        final String result = GeneralUtils.removeJsComments(jsSrc);
+
+        // Assertions
+        Assert.assertNotNull(result);
+        Assert.assertEquals("function doSomething(a,b) {\n" +
+                "  var c = a;\n" +
+                "  var d = b;\n" +
+                "  var e = c+d;\n" +
+                "}", result);
+    }
+
+    @Test
+    public void removeJsComments_singleLine_Test() {
+
+        // Setup
+        final String jsSrc = "function doSomething(a,b) { var c = a; var d = b; var e = c+d; } // end of line";
+
+        // Test
+        final String result = GeneralUtils.removeJsComments(jsSrc);
+
+        // Assertions
+        Assert.assertNotNull(result);
+        Assert.assertEquals("function doSomething(a,b) { var c = a; var d = b; var e = c+d; }", result);
+    }
+
+    @Test
+    public void removeJsComments_nullInput_Test() {
+
+        // Test & Assertions
+        Assert.assertNull(GeneralUtils.removeJsComments(null));
+    }
+
+    @Test
+    public void removeJsComments_BlankInput_Test() {
+
+        // Test
+        final String result = GeneralUtils.removeJsComments("");
+
+        // Assertions
+        Assert.assertNotNull(result);
+        Assert.assertEquals("", result);
     }
 
 }
